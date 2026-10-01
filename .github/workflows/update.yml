@@ -1,0 +1,141 @@
+name: Update
+
+# Bumps casks to the latest GitHub release of each app. A bump is only pushed
+# after the updated casks pass the same audit and install test as CI, because a
+# push made with GITHUB_TOKEN does not trigger the Test workflow.
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      casks:
+        description: Casks to check, separated by spaces (default all)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check for new releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      casks: ${{ steps.bump.outputs.casks }}
+      failed: ${{ steps.bump.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Look up releases and verify checksums
+        id: bump
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CASKS: ${{ inputs.casks }}
+        run: |
+          read -ra casks <<<"$CASKS"
+          # A cask that cannot be checked (API error, checksum mismatch) must not
+          # hold back the others; the Report job fails the run afterwards.
+          python3 .github/scripts/bump_casks.py --output plan.json "${casks[@]}" \
+            || echo "failed=true" >>"$GITHUB_OUTPUT"
+      - name: Show the changes
+        if: steps.bump.outputs.changed == 'true'
+        run: git diff
+      - uses: actions/upload-artifact@v5
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          name: plan
+          path: plan.json
+          retention-days: 7
+
+  test:
+    name: Test (${{ matrix.os }})
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+      HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@main
+      - uses: actions/download-artifact@v5
+        with:
+          name: plan
+      - name: Apply the changes
+        run: |
+          python3 .github/scripts/bump_casks.py --apply plan.json
+          rm plan.json
+          git diff
+      - name: Audit, install, check and uninstall
+        env:
+          CASKS: ${{ needs.check.outputs.casks }}
+        run: |
+          read -ra casks <<<"$CASKS"
+          .github/scripts/test-casks.sh "${casks[@]}"
+
+  commit:
+    name: Commit
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: plan
+          path: ${{ runner.temp }}
+      - name: Commit one change per cask and push
+        env:
+          PLAN: ${{ runner.temp }}/plan.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 .github/scripts/bump_casks.py --apply "$PLAN"
+          jq -c '.[]' "$PLAN" | while read -r change; do
+            token="$(jq -r .token <<<"$change")"
+            if git diff --quiet -- "Casks/${token}.rb"; then
+              continue
+            fi
+            git add "Casks/${token}.rb"
+            git commit --quiet \
+              -m "$(jq -r '"\(.token) \(.old) -> \(.new)"' <<<"$change")" \
+              -m "$(jq -r '"Release: \(.release)\nSHA-256: \(.sha256)"' <<<"$change")"
+          done
+          if [[ -z "$(git log --oneline "@{upstream}..HEAD")" ]]; then
+            echo "Nothing to push."
+            exit 0
+          fi
+          git log --oneline "@{upstream}..HEAD"
+          for attempt in 1 2 3; do
+            git push && exit 0
+            sleep $((attempt * 5))
+            git pull --rebase
+          done
+          exit 1
+
+  report:
+    name: Report
+    needs: [check, commit]
+    if: always() && needs.check.outputs.failed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail the run
+        run: |
+          echo "::error::Some casks could not be checked; see the 'Check for new releases' job."
+          exit 1

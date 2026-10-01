@@ -1,0 +1,56 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, to catch Homebrew changes and anything that broke upstream.
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check scripts
+        run: |
+          shellcheck .github/scripts/*.sh
+          python3 -m py_compile .github/scripts/bump_casks.py
+      - name: Check casks against the latest releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/bump_casks.py --dry-run --output plan.json
+      - name: Warn about outdated casks
+        run: |
+          jq -r '.[] | "::warning title=\(.token) is outdated::\(.token) \(.old) -> \(.new); the Update workflow bumps it within the hour"' plan.json
+
+  casks:
+    name: Casks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple silicon on the newest and oldest supported runner images, plus Intel.
+        os: [macos-latest, macos-14, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+      HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+    steps:
+      # Checks out this repository and links it into Homebrew as whrss9527/tap.
+      - uses: Homebrew/actions/setup-homebrew@main
+      - name: Audit, install, check and uninstall
+        run: .github/scripts/test-casks.sh
