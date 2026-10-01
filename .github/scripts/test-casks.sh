@@ -66,7 +66,7 @@ for token in "${tokens[@]}"; do
   echo "::group::${token} ${version}: audit"
   # --strict --online: every check that applies to a third-party tap, except
   #   token_conflicts   homebrew/core's unrelated `pop` formula; casks in a tap
-  #                     are installed by their full name, so there is no clash
+  #                     are installed by their full name, so the two never meet
   #   livecheck_version a release newer than the cask is expected for up to an
   #                     hour; the Update workflow bumps it and the Lint job warns
   # --new is left out: it adds homebrew-cask admission checks (repository

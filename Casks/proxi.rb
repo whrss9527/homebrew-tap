@@ -4,7 +4,7 @@ cask "proxi" do
 
   url "https://github.com/whrss9527/proxi/releases/download/v#{version}/Proxi-macos.zip"
   name "Proxi"
-  desc "Menu bar proxy switch with subscriptions, rule-based routing and LAN sharing"
+  desc "Switch the system, Terminal, git and npm proxy settings together"
   homepage "https://whrss.com/proxi/"
 
   livecheck do
@@ -16,23 +16,26 @@ cask "proxi" do
   depends_on macos: :sonoma
 
   app "Proxi.app"
-  # A wrapper rather than a symlink: the app finds its bundle (version, bundled
-  # core) only when started from its real path.
+  # A wrapper rather than a symlink: the app finds its own bundle (version,
+  # resources) only when started from its real path.
   command_wrapper "proxi", executable: "#{appdir}/Proxi.app/Contents/MacOS/Proxi"
 
-  # The privileged helper (enhanced and gateway modes) is installed on demand
-  # from the app; every path below may be absent.
+  # Versions up to 0.12 could install a privileged background helper; 0.13 and
+  # later only offer to remove it. Clean it up here so upgrades from older
+  # versions leave nothing behind; every path below may be absent.
   uninstall launchctl: "com.whrss9527.proxyswitch.helper",
             quit:      "com.whrss9527.proxyswitch",
             delete:    [
               "/Library/Application Support/ProxySwitch",
+              "/Library/LaunchDaemons/com.whrss9527.proxyswitch.helper.plist",
               "/Library/Logs/ProxySwitch-helper.log",
-              "/Library/PrivilegedHelperTools/com.whrss9527.proxyswitch.helper",
-              "/Library/PrivilegedHelperTools/com.whrss9527.proxyswitch.mihomo",
+              "/Library/PrivilegedHelperTools/com.whrss9527.proxyswitch.*",
               "/var/run/com.whrss9527.proxyswitch.helper.sock",
             ]
 
-  # Synced config in iCloud Drive is intentionally left alone.
+  # Profiles synced through iCloud Drive (~/Library/Mobile Documents/
+  # com~apple~CloudDocs/Proxi) are intentionally left alone, and so are proxy
+  # passwords in the login keychain (service com.whrss9527.proxyswitch).
   zap delete: [
         "/usr/local/bin/proxi",
         "/usr/local/bin/proxyswitch",

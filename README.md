@@ -20,7 +20,7 @@ Always use the full name `whrss9527/tap/<app>`. It taps this repository and trus
 | [Pop](https://whrss.com/pop/) ([source](https://github.com/whrss9527/pop)) | Right-click ring toolbox: OCR, translation, clipboard history, plugins | `whrss9527/tap/pop` | macOS 15 |
 | [Meno](https://whrss.com/meno/) ([source](https://github.com/whrss9527/meno)) | Menu bar manager: hide and stash icons, rules and scenes | `whrss9527/tap/meno` | macOS 14 |
 | [Stox](https://whrss.com/stox/) ([source](https://github.com/whrss9527/stox)) | Stock quotes in the menu bar: A-shares, Hong Kong, US | `whrss9527/tap/stox` | macOS 13 |
-| [Proxi](https://whrss.com/proxi/) ([source](https://github.com/whrss9527/proxi)) | One switch for system, shell, git and npm proxies; also links the `proxi` command | `whrss9527/tap/proxi` | macOS 14 |
+| [Proxi](https://whrss.com/proxi/) ([source](https://github.com/whrss9527/proxi)) | Proxy switch for developers: points the system proxy, Terminal, git and npm at your own proxy server; also links the `proxi` command | `whrss9527/tap/proxi` | macOS 14 |
 
 ## Updates
 
@@ -39,14 +39,13 @@ brew uninstall --cask proxi          # remove the app
 brew uninstall --cask --zap proxi    # also remove its settings, caches and history
 ```
 
-`--zap` removes data under `~/Library` only. Anything an app syncs through iCloud Drive (Stox watchlists, Proxi config) is left in place.
+`--zap` removes data under `~/Library` only. Anything an app syncs through iCloud Drive (Stox watchlists, Proxi profiles) is left in place, and so are proxy passwords Proxi saved in your keychain (remove them in Keychain Access if you like).
 
-Proxi's privileged helper, used by Enhanced Mode and Gateway Mode, is stopped and removed on uninstall. Homebrew asks for your password to do it.
+Proxi 0.12 and earlier could install a background helper. If one is still there, uninstalling (or upgrading through Homebrew) stops and removes it, and Homebrew asks for your password to do it.
 
 ## Troubleshooting
 
 - **`Refusing to load cask … from untrusted tap`**: install with the full name as shown above, or run `brew trust whrss9527/tap` once.
 - **`It seems there is already a Binary at '/usr/local/bin/proxi'`** (Intel Macs): that's the script Proxi's *Automation → Install Command-Line Tool* button puts there. Remove it with `sudo rm /usr/local/bin/proxi` and install again. Homebrew's `proxi` does the same job.
-- **Proxi's Enhanced Mode or Gateway Mode stops after `brew upgrade --greedy` or `brew reinstall`**: Homebrew removes the helper whenever it replaces the app. Turn the mode on again in Proxi to reinstall the helper, or let Proxi update itself instead.
 - **Installed the app from a download before?** Run `brew install --cask --adopt whrss9527/tap/<app>` to let Homebrew take over the existing copy in `/Applications`.
 - **Something else**: open an issue in the app's repository.
