@@ -2,8 +2,7 @@ cask "proxi" do
   version "0.12.0"
   sha256 "00c2c88633b0b5ae25069559cf2c3843d7047423b209c79a0de62201ef0064f8"
 
-  url "https://github.com/whrss9527/proxi/releases/download/v#{version}/Proxi-macos.zip",
-      verified: "github.com/whrss9527/proxi/"
+  url "https://github.com/whrss9527/proxi/releases/download/v#{version}/Proxi-macos.zip"
   name "Proxi"
   desc "Menu bar proxy switch with subscriptions, rule-based routing and LAN sharing"
   homepage "https://whrss.com/proxi/"

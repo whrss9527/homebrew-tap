@@ -2,8 +2,7 @@ cask "stox" do
   version "0.48.0"
   sha256 "8bd0e81baf6b6c3225970e2e9ec4e1dbd98e01b9293f509f58ed3733d80217c2"
 
-  url "https://github.com/whrss9527/stox/releases/download/v#{version}/Stox.zip",
-      verified: "github.com/whrss9527/stox/"
+  url "https://github.com/whrss9527/stox/releases/download/v#{version}/Stox.zip"
   name "Stox"
   desc "Menu bar stock quotes for China A-share, Hong Kong and US markets"
   homepage "https://whrss.com/stox/"

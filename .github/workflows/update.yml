@@ -31,7 +31,7 @@ jobs:
       casks: ${{ steps.bump.outputs.casks }}
       failed: ${{ steps.bump.outputs.failed }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Look up releases and verify checksums
         id: bump
         env:
@@ -46,7 +46,7 @@ jobs:
       - name: Show the changes
         if: steps.bump.outputs.changed == 'true'
         run: git diff
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: steps.bump.outputs.changed == 'true'
         with:
           name: plan
@@ -62,7 +62,7 @@ jobs:
       matrix:
         os: [macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       HOMEBREW_NO_ANALYTICS: 1
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -70,7 +70,7 @@ jobs:
       HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
     steps:
       - uses: Homebrew/actions/setup-homebrew@main
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: plan
       - name: Apply the changes
@@ -93,10 +93,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: plan
           path: ${{ runner.temp }}

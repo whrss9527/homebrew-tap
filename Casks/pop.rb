@@ -2,8 +2,7 @@ cask "pop" do
   version "0.39.0"
   sha256 "7cfeca942e4c3783fb5cd8eebac7459ea1274df06ad44f92f4b49e210380b0ca"
 
-  url "https://github.com/whrss9527/pop/releases/download/v#{version}/Pop-#{version}.zip",
-      verified: "github.com/whrss9527/pop/"
+  url "https://github.com/whrss9527/pop/releases/download/v#{version}/Pop-#{version}.zip"
   name "Pop"
   desc "Right-click ring toolbox with OCR, translation and clipboard history"
   homepage "https://whrss.com/pop/"

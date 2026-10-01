@@ -2,8 +2,7 @@ cask "meno" do
   version "0.12.0"
   sha256 "b0b1a94860b32d0a583b18cacc4ebbb19b6c0cba9e292b8db4e0d3fc6924d045"
 
-  url "https://github.com/whrss9527/meno/releases/download/v#{version}/Meno.zip",
-      verified: "github.com/whrss9527/meno/"
+  url "https://github.com/whrss9527/meno/releases/download/v#{version}/Meno.zip"
   name "Meno"
   desc "Menu bar manager to hide and stash icons with rules and scenes"
   homepage "https://whrss.com/meno/"

@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Check scripts
         run: |
           shellcheck .github/scripts/*.sh
@@ -43,7 +43,7 @@ jobs:
         # Apple silicon on the newest and oldest supported runner images, plus Intel.
         os: [macos-latest, macos-14, macos-15-intel]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       HOMEBREW_NO_ANALYTICS: 1
       HOMEBREW_NO_AUTO_UPDATE: 1

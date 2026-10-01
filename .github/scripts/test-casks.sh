@@ -62,10 +62,10 @@ for token in "${tokens[@]}"; do
   binaries="$(jq -r '.casks[0].artifacts[] | select(.binary) | .binary | (.[1].target // (.[0] | split("/") | last))' <<<"$info")"
 
   echo "::group::${token} ${version}: audit"
-  # --strict --online --signing: every check that applies to a third-party tap,
-  # including the notarization check. --new is left out: it adds homebrew-cask
-  # admission checks (repository notability, token conflicts with other taps).
-  brew audit --cask --strict --online --signing "$cask" || fail "brew audit failed"
+  # --strict --online: every check that applies to a third-party tap. --new is
+  # left out: it adds homebrew-cask admission checks (repository notability,
+  # token conflicts with other taps). Signing and notarization are checked below.
+  brew audit --cask --strict --online "$cask" || fail "brew audit failed"
   echo "::endgroup::"
 
   if [[ -n "$min_macos" ]] && ! macos_at_least "$min_macos"; then
@@ -93,9 +93,9 @@ for token in "${tokens[@]}"; do
     installed="$(defaults read "${path}/Contents/Info" CFBundleShortVersionString)"
     [[ "$installed" == "$version" ]] || fail "${app} reports version ${installed}, cask says ${version}"
     codesign --verify --deep --strict --verbose=2 "$path" || fail "codesign --verify failed"
-    signature="$(codesign -dvv "$path" 2>&1)"
+    signature="$(codesign -dvvv "$path" 2>&1)"
     grep -q '^Authority=Developer ID Application:' <<<"$signature" || fail "not signed with a Developer ID certificate"
-    grep -Eq '^flags=.*runtime' <<<"$signature" || fail "hardened runtime is off"
+    grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime' <<<"$signature" || fail "hardened runtime is off"
     grep -E '^(Authority=Developer ID Application|TeamIdentifier|Timestamp)' <<<"$signature" || true
     # Gatekeeper, as on a user's Mac: brew quarantines the download, and
     # spctl must accept it as notarized Developer ID software.
@@ -131,7 +131,9 @@ for token in "${tokens[@]}"; do
   if [[ -d "$path" ]]; then
     echo "::group::${token}: launch"
     executable="$(defaults read "${path}/Contents/Info" CFBundleExecutable)"
-    open "$path"
+    # In the background: `open` can wait for the app to finish launching, and an
+    # app showing its first-run window never reports that on a headless runner.
+    open -g "$path" &
     if wait_for_process "$executable" 20 running; then
       sleep 3
       pgrep -x "$executable" >/dev/null || fail "${app} quit on its own right after launch"
