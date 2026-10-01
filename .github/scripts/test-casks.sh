@@ -141,12 +141,14 @@ for token in "${tokens[@]}"; do
     # In the background: `open` can wait for the app to finish launching, and an
     # app showing its first-run window never reports that on a headless runner.
     open -g "$path" &
+    open_pid=$!
     if wait_for_process "$executable" 20 running; then
       sleep 3
       pgrep -x "$executable" >/dev/null || fail "${app} quit on its own right after launch"
     else
       fail "${app} did not start"
     fi
+    kill "$open_pid" 2>/dev/null || true
     echo "::endgroup::"
   fi
 
