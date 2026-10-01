@@ -16,7 +16,9 @@ cask "proxi" do
   depends_on macos: :sonoma
 
   app "Proxi.app"
-  binary "#{appdir}/Proxi.app/Contents/MacOS/Proxi", target: "proxi"
+  # A wrapper rather than a symlink: the app finds its bundle (version, bundled
+  # core) only when started from its real path.
+  command_wrapper "proxi", executable: "#{appdir}/Proxi.app/Contents/MacOS/Proxi"
 
   # The privileged helper (enhanced and gateway modes) is installed on demand
   # from the app; every path below may be absent.

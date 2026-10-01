@@ -59,13 +59,20 @@ for token in "${tokens[@]}"; do
   version="$(jq -r '.casks[0].version' <<<"$info")"
   app="$(jq -r '[.casks[0].artifacts[] | select(.app) | .app[0]][0] // empty' <<<"$info")"
   min_macos="$(jq -r '.casks[0].depends_on.macos[">="][0] // empty' <<<"$info")"
-  binaries="$(jq -r '.casks[0].artifacts[] | select(.binary) | .binary | (.[1].target // (.[0] | split("/") | last))' <<<"$info")"
+  binaries="$(jq -r '.casks[0].artifacts[]
+    | (.binary // empty | (.[1].target // (.[0] | split("/") | last))),
+      (.command_wrapper // empty | .[0])' <<<"$info")"
 
   echo "::group::${token} ${version}: audit"
-  # --strict --online: every check that applies to a third-party tap. --new is
-  # left out: it adds homebrew-cask admission checks (repository notability,
-  # token conflicts with other taps). Signing and notarization are checked below.
-  brew audit --cask --strict --online "$cask" || fail "brew audit failed"
+  # --strict --online: every check that applies to a third-party tap, except
+  #   token_conflicts   homebrew/core's unrelated `pop` formula; casks in a tap
+  #                     are installed by their full name, so there is no clash
+  #   livecheck_version a release newer than the cask is expected for up to an
+  #                     hour; the Update workflow bumps it and the Lint job warns
+  # --new is left out: it adds homebrew-cask admission checks (repository
+  # notability and age). Signing and notarization are checked below.
+  brew audit --cask --strict --online --except=token_conflicts,livecheck_version "$cask" \
+    || fail "brew audit failed"
   echo "::endgroup::"
 
   if [[ -n "$min_macos" ]] && ! macos_at_least "$min_macos"; then
@@ -149,8 +156,10 @@ for token in "${tokens[@]}"; do
   for binary in $binaries; do
     [[ ! -e "$(brew --prefix)/bin/${binary}" ]] || fail "$(brew --prefix)/bin/${binary} is still there after uninstall"
   done
-  if [[ -n "${executable:-}" ]] && ! wait_for_process "$executable" 15 gone; then
-    fail "${executable} is still running after uninstall (quit directive did not work)"
+  if [[ -n "${executable:-}" ]] && ! wait_for_process "$executable" 5 gone; then
+    # Homebrew quits apps through Apple Events, which macOS only allows after the
+    # user grants Automation access; a CI runner can't, so this is not an error.
+    echo "::warning title=${token}::${executable} kept running: CI has no Automation access for brew's quit"
     pkill -x "$executable" || true
   fi
   unset executable
