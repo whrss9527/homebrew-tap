@@ -1,6 +1,6 @@
 cask "meno" do
-  version "0.12.0"
-  sha256 "b0b1a94860b32d0a583b18cacc4ebbb19b6c0cba9e292b8db4e0d3fc6924d045"
+  version "0.12.8"
+  sha256 "71a4d43e04937edb77fce2e6df6e3f46c9d0da48de5d6363e95c25bf57f89687"
 
   url "https://github.com/whrss9527/meno/releases/download/v#{version}/Meno.zip"
   name "Meno"
