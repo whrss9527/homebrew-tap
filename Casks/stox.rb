@@ -1,6 +1,6 @@
 cask "stox" do
-  version "0.50.3"
-  sha256 "ec4211ea64d898c38a26eb2d292207471251cc1e45104118131152ea965c4e19"
+  version "0.50.5"
+  sha256 "c00625edacc288b59bb68d7784d1896d3635a3f87ee403aec81ea3f6e6bfb815"
 
   url "https://github.com/whrss9527/stox/releases/download/v#{version}/Stox.zip"
   name "Stox"
