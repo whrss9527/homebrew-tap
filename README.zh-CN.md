@@ -30,7 +30,7 @@ brew install --cask whrss9527/tap/proxi
 brew upgrade --cask --greedy whrss9527/tap/pop
 ```
 
-本仓库会在 App 发布新版后一小时左右跟进。每次更新都会核对发布页的 `SHA256SUMS.txt`，并先在 CI 的 macOS 上装一遍，通过后才提交。
+本仓库约每小时检查一次 App 的最新发布。每次更新都会核对发布页的 `SHA256SUMS.txt`，并在 Apple silicon 和 Intel 的 macOS CI 上通过安装、签名与公证检查后才提交。某个 App 验证失败时保留旧版本，其他已通过验证的 App 仍可更新。
 
 ## 卸载
 

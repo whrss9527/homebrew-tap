@@ -27,6 +27,7 @@ jobs:
         run: |
           shellcheck .github/scripts/*.sh
           python3 -m py_compile .github/scripts/bump_casks.py
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Check casks against the latest releases
         env:
           GITHUB_TOKEN: ${{ github.token }}
