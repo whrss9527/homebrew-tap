@@ -30,6 +30,7 @@ jobs:
       changed: ${{ steps.bump.outputs.changed }}
       casks: ${{ steps.bump.outputs.casks }}
       failed: ${{ steps.bump.outputs.failed }}
+      tokens: ${{ steps.matrix.outputs.tokens }}
     steps:
       - uses: actions/checkout@v7
       - name: Look up releases and verify checksums
@@ -46,6 +47,9 @@ jobs:
       - name: Show the changes
         if: steps.bump.outputs.changed == 'true'
         run: git diff
+      - name: Select changed casks
+        id: matrix
+        run: echo "tokens=$(jq -c '[.[].token]' plan.json)" >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         if: steps.bump.outputs.changed == 'true'
         with:
@@ -54,13 +58,14 @@ jobs:
           retention-days: 7
 
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.cask }}, ${{ matrix.os }})
     needs: check
     if: needs.check.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, macos-15-intel]
+        cask: ${{ fromJSON(needs.check.outputs.tokens) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -75,19 +80,37 @@ jobs:
           name: plan
       - name: Apply the changes
         run: |
-          python3 .github/scripts/bump_casks.py --apply plan.json
-          rm plan.json
+          jq --arg token "$CASK" 'map(select(.token == $token))' plan.json > selected.json
+          python3 .github/scripts/bump_casks.py --apply selected.json
+          rm selected.json
           git diff
+        env:
+          CASK: ${{ matrix.cask }}
       - name: Audit, install, check and uninstall
         env:
-          CASKS: ${{ needs.check.outputs.casks }}
+          CASK: ${{ matrix.cask }}
         run: |
-          read -ra casks <<<"$CASKS"
-          .github/scripts/test-casks.sh "${casks[@]}"
+          .github/scripts/test-casks.sh "$CASK"
+      - name: Record successful verification
+        env:
+          CASK: ${{ matrix.cask }}
+          RUNNER: ${{ matrix.os }}
+        run: |
+          jq --arg token "$CASK" --arg runner "$RUNNER" \
+            '.[] | select(.token == $token) | {token, new, sha256, runner: $runner}' \
+            plan.json > receipt.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: verified-${{ matrix.cask }}-${{ matrix.os }}
+          path: receipt.json
+          if-no-files-found: error
+          retention-days: 7
 
   commit:
     name: Commit
     needs: [check, test]
+    # A failed cask must stay pinned, but may not block other verified casks.
+    if: always() && needs.check.result == 'success' && needs.check.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -100,9 +123,19 @@ jobs:
         with:
           name: plan
           path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: verified-*
+          path: ${{ runner.temp }}/receipts
+      - name: Select only fully verified changes
+        env:
+          TEMP_DIR: ${{ runner.temp }}
+        run: |
+          python3 .github/scripts/verified_plan.py "$TEMP_DIR/plan.json" \
+            "$TEMP_DIR/receipts" "$TEMP_DIR/verified-plan.json" macos-latest macos-15-intel
       - name: Commit one change per cask and push
         env:
-          PLAN: ${{ runner.temp }}/plan.json
+          PLAN: ${{ runner.temp }}/verified-plan.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

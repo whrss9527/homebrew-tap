@@ -30,7 +30,7 @@ The apps update themselves, so the casks are marked `auto_updates` and a plain `
 brew upgrade --cask --greedy whrss9527/tap/pop
 ```
 
-This tap follows each app's latest GitHub release within about an hour. Every bump is checked against the release's `SHA256SUMS.txt` and installed on macOS in CI before it lands.
+This tap checks each app's latest GitHub release about once an hour. Every bump is checked against the release's `SHA256SUMS.txt` and must pass macOS installation, signature and notarization checks on both Apple silicon and Intel before it lands. An app that fails verification stays at its previous version while other verified apps can update.
 
 ## Uninstall
 
