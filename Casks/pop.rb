@@ -1,6 +1,6 @@
 cask "pop" do
-  version "0.68.0"
-  sha256 "100f273897886fe9022e0a7d66b7f1b18f0a0cc1ecba77cc3b241a34d5dd3a64"
+  version "0.69.0"
+  sha256 "c3b76ca4c8cce0ce03d61f9372d1a485db3a187854e67d274b8c8aa01d0259a2"
 
   url "https://github.com/whrss9527/pop/releases/download/v#{version}/Pop-#{version}.zip"
   name "Pop"
