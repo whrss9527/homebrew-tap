@@ -49,6 +49,20 @@ wait_for_process() { # name, seconds, want (running|gone)
   return 1
 }
 
+stapler_validate_with_retry() {
+  local app="$1" attempt result
+  for attempt in 1 2 3; do
+    if xcrun stapler validate "$app"; then
+      return 0
+    else
+      result=$?
+    fi
+    [[ "$result" -eq 68 && "$attempt" -lt 3 ]] || return "$result"
+    echo "stapler validate returned 68; retrying in 5 seconds (${attempt}/3)"
+    sleep 5
+  done
+}
+
 echo "::group::brew style ${TAP}"
 brew style "$TAP" || { token=style; fail "brew style failed"; }
 echo "::endgroup::"
@@ -99,21 +113,26 @@ for token in "${tokens[@]}"; do
   else
     installed="$(defaults read "${path}/Contents/Info" CFBundleShortVersionString)"
     [[ "$installed" == "$version" ]] || fail "${app} reports version ${installed}, cask says ${version}"
-    codesign --verify --deep --strict --verbose=2 "$path" || fail "codesign --verify failed"
+    codesign --verify --deep --strict --all-architectures --verbose=2 "$path" || fail "codesign --verify failed"
     signature="$(codesign -dvvv "$path" 2>&1)"
     grep -q '^Authority=Developer ID Application:' <<<"$signature" || fail "not signed with a Developer ID certificate"
     grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime' <<<"$signature" || fail "hardened runtime is off"
     grep -E '^(Authority=Developer ID Application|TeamIdentifier|Timestamp)' <<<"$signature" || true
     # Gatekeeper, as on a user's Mac: brew quarantines the download, and
     # spctl must accept it as notarized Developer ID software.
+    if policy="$(spctl --status 2>&1)"; then
+      [[ "$policy" == 'assessments enabled' ]] || fail "Gatekeeper is not confirmed enabled: ${policy}"
+    else
+      fail "could not check Gatekeeper status: ${policy}"
+    fi
     assessment="$(spctl --assess --type execute --verbose=4 "$path" 2>&1)" || fail "spctl rejected ${app}: ${assessment}"
     echo "$assessment"
-    if grep -q 'override=security disabled' <<<"$assessment"; then
-      echo "::warning title=${token}::Gatekeeper is disabled on this runner; spctl could not confirm notarization"
-    elif ! grep -q 'source=Notarized Developer ID' <<<"$assessment"; then
+    if grep -qi 'override\|security disabled' <<<"$assessment"; then
+      fail "spctl assessment is overridden: ${assessment}"
+    elif ! grep -q '^source=Notarized Developer ID$' <<<"$assessment"; then
       fail "spctl did not report 'Notarized Developer ID': ${assessment}"
     fi
-    xcrun stapler validate "$path" || echo "(no stapled ticket; Gatekeeper checks notarization online)"
+    stapler_validate_with_retry "$path" || fail "stapler validate failed for ${app} (exit $?)"
   fi
   for binary in $binaries; do
     if ! command -v "$binary" >/dev/null; then
