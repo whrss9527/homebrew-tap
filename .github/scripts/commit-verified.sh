@@ -7,8 +7,10 @@ repository="$(git rev-parse --show-toplevel)"
 cd "$repository"
 branch="${CASK_DEFAULT_BRANCH:?}"
 git check-ref-format --branch "$branch" >/dev/null
-git diff --quiet && git diff --cached --quiet && [[ -z "$(git ls-files --others --exclude-standard)" ]] \
-  || { echo "Refusing to replay changes in a dirty checkout."; exit 1; }
+if ! git diff --quiet || ! git diff --cached --quiet || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+  echo "Refusing to replay changes in a dirty checkout."
+  exit 1
+fi
 
 work="$(mktemp -d "${RUNNER_TEMP:?}/cask-plan-replay.XXXXXX")"
 cp "${1:?Verified plan is required.}" "$work/verified-plan.json"
