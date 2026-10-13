@@ -171,7 +171,12 @@ class CaskNotarizationTests(unittest.TestCase):
 
     def test_only_successful_cask_jobs_can_supply_both_required_receipts(self):
         runners = {"arm64": "macos-latest", "x86_64": "macos-15-intel"}
-        plan = [{"token": token, "old": "0.9", "new": "1.0", "sha256": "a" * 64} for token in ["pop", "stox"]]
+        plan = []
+        for token in ["pop", "stox"]:
+            template = f"https://github.com/whrss9527/{token}/releases/download/v#{{version}}/{token.title()}.zip"
+            plan.append({"schema": 2, "token": token, "old": "0.9", "old_sha256": "b" * 64,
+                         "url_template": template, "new": "1.0", "sha256": "a" * 64,
+                         "url": template.replace("#{version}", "1.0")})
         receipts = []
         for architecture, runner in runners.items():
             for change in plan:
