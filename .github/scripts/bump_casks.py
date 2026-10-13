@@ -187,6 +187,12 @@ def release_data(payload: bytes, token: str) -> dict:
         raise BumpError(f"{token}: latest release has invalid draft/prerelease flags")
     if "html_url" in release and not isinstance(release["html_url"], str):
         raise BumpError(f"{token}: latest release has an invalid html_url")
+    for field in ("tag_name", "html_url"):
+        if field in release:
+            try:
+                release[field].encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise BumpError(f"{token}: latest release has invalid Unicode in {field}") from error
     if not isinstance(release.get("assets"), list):
         raise BumpError(f"{token}: latest release assets must be an array")
     names = set()
@@ -211,6 +217,12 @@ def release_data(payload: bytes, token: str) -> dict:
         digest = asset.get("digest")
         if digest is not None and not isinstance(digest, str):
             raise BumpError(f"{token}: latest release has an invalid asset digest")
+        try:
+            asset["name"].encode("utf-8")
+            if isinstance(digest, str):
+                digest.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise BumpError(f"{token}: latest release has invalid Unicode in an asset") from error
         if isinstance(digest, str) and digest.startswith("sha256:") and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             raise BumpError(f"{token}: latest release has a malformed SHA-256 digest")
     return release
@@ -239,7 +251,11 @@ def check(token: str, path: Path) -> dict | None:
     if latest == current:
         log(f"{token}: {current} is up to date")
         return None
-    if version_key(latest) < version_key(current):
+    try:
+        latest_is_older = version_key(latest) < version_key(current)
+    except ValueError as error:
+        raise BumpError(f"{token}: version has a numeric component that cannot be parsed") from error
+    if latest_is_older:
         log(f"{token}: cask has {current}, newer than the latest release {latest}; leaving it alone")
         return None
 
