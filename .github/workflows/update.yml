@@ -97,7 +97,7 @@ jobs:
           RUNNER: ${{ matrix.os }}
         run: |
           jq --arg token "$CASK" --arg runner "$RUNNER" \
-            '.[] | select(.token == $token) | {token, new, sha256, runner: $runner}' \
+            '.[] | select(.token == $token) | {schema, token, old, old_sha256, url_template, new, sha256, url, runner: $runner}' \
             plan.json > receipt.json
       - uses: actions/upload-artifact@v7
         with:
@@ -115,6 +115,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+    outputs:
+      rejected: ${{ steps.commit.outputs.rejected }}
+    env:
+      PYTHONDONTWRITEBYTECODE: 1
     steps:
       - uses: actions/checkout@v7
         with:
@@ -134,41 +138,19 @@ jobs:
           python3 .github/scripts/verified_plan.py "$TEMP_DIR/plan.json" \
             "$TEMP_DIR/receipts" "$TEMP_DIR/verified-plan.json" macos-latest macos-15-intel
       - name: Commit one change per cask and push
+        id: commit
         env:
           PLAN: ${{ runner.temp }}/verified-plan.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          python3 .github/scripts/bump_casks.py --apply "$PLAN"
-          jq -c '.[]' "$PLAN" | while read -r change; do
-            token="$(jq -r .token <<<"$change")"
-            if git diff --quiet -- "Casks/${token}.rb"; then
-              continue
-            fi
-            git add "Casks/${token}.rb"
-            git commit --quiet \
-              -m "$(jq -r '"\(.token) \(.old) -> \(.new)"' <<<"$change")" \
-              -m "$(jq -r '"Release: \(.release)\nSHA-256: \(.sha256)"' <<<"$change")"
-          done
-          if [[ -z "$(git log --oneline "@{upstream}..HEAD")" ]]; then
-            echo "Nothing to push."
-            exit 0
-          fi
-          git log --oneline "@{upstream}..HEAD"
-          for attempt in 1 2 3; do
-            git push && exit 0
-            sleep $((attempt * 5))
-            git pull --rebase
-          done
-          exit 1
+          CASK_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/scripts/commit-verified.sh "$PLAN"
 
   report:
     name: Report
     needs: [check, commit]
-    if: always() && needs.check.outputs.failed == 'true'
+    if: always() && (needs.check.outputs.failed == 'true' || needs.commit.outputs.rejected == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Fail the run
         run: |
-          echo "::error::Some casks could not be checked; see the 'Check for new releases' job."
+          echo "::error::Some casks could not be checked or replayed; see the check and commit jobs."
           exit 1

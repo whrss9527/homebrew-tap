@@ -10,8 +10,8 @@ release's SHA256SUMS.txt, and rewrites `version` and `sha256`.
   bump_casks.py pop meno             only these casks
   bump_casks.py --dry-run            report, change nothing
   bump_casks.py --output plan.json   also write the changes as JSON
-  bump_casks.py --apply plan.json    write exactly the changes in plan.json
-                                     (no network; used to replay a tested plan)
+  bump_casks.py --apply plan.json    replay changes whose verified inputs still
+                                     match (no network); --output records accepted changes
 
 Set GITHUB_TOKEN to avoid the 60 requests/hour unauthenticated API limit.
 Exits non-zero if any cask could not be checked or failed verification.
@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -41,10 +42,33 @@ URL_RE = re.compile(r'^  url "([^"]+)"', re.M)
 RELEASE_URL_RE = re.compile(
     r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/download/(?P<tag>[^/]+)/(?P<asset>[^/]+)$"
 )
+PLAN_FIELDS = ("schema", "token", "old", "old_sha256", "url_template", "new", "sha256", "url")
 
 
 class BumpError(Exception):
     pass
+
+
+def validate_change(change: dict) -> None:
+    if not isinstance(change, dict) or type(change.get("schema")) is not int or change["schema"] != 2:
+        raise BumpError("verification plan schema is unsupported; check and verify the cask again")
+    if not all(isinstance(change.get(key), str) for key in PLAN_FIELDS if key != "schema"):
+        raise BumpError("verification plan is missing its bound inputs")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9@.-]*", change["token"]):
+        raise BumpError("verification plan has an invalid cask token")
+    if not all(re.fullmatch(r"[0-9A-Za-z.\-+]+", change[key]) for key in ("old", "new")):
+        raise BumpError("verification plan has an invalid version")
+    if not all(re.fullmatch(r"[0-9a-f]{64}", change[key]) for key in ("old_sha256", "sha256")):
+        raise BumpError("verification plan has an invalid digest")
+    match = RELEASE_URL_RE.fullmatch(change["url_template"])
+    if not match or "#{version}" not in match["tag"]:
+        raise BumpError("verification plan has an invalid URL template")
+    if change["url"] != change["url_template"].replace("#{version}", change["new"]):
+        raise BumpError("verification plan target URL does not match its bound template and version")
+    target = urllib.parse.urlsplit(change["url"])
+    if (target.scheme != "https" or target.netloc != "github.com" or target.query or target.fragment
+            or not RELEASE_URL_RE.fullmatch(change["url"])):
+        raise BumpError("verification plan target URL is not a complete GitHub release asset URL")
 
 
 def log(message: str) -> None:
@@ -185,8 +209,11 @@ def check(token: str, path: Path) -> dict | None:
     log(f"  sha256 {sha256} (verified: {', '.join(sources)})")
 
     return {
+        "schema": 2,
         "token": token,
         "old": current,
+        "old_sha256": cask["sha256"],
+        "url_template": cask["url"],
         "new": latest,
         "sha256": sha256,
         "url": url,
@@ -194,20 +221,34 @@ def check(token: str, path: Path) -> dict | None:
     }
 
 
-def apply(changes: list[dict]) -> None:
+def apply(changes: list[dict], casks: Path | None = None) -> tuple[list[dict], list[str]]:
+    approved, failures = [], []
+    casks = casks or CASKS
     for change in changes:
-        path = CASKS / f"{change['token']}.rb"
-        cask = read_cask(path)
-        if cask["version"] == change["new"] and cask["sha256"] == change["sha256"]:
-            log(f"{change['token']}: already at {change['new']}")
-            continue
-        if cask["version"] != change["old"]:
-            raise BumpError(f"{change['token']}: cask is at {cask['version']}, plan expected {change['old']}")
-        write_cask(path, cask["text"], change["new"], change["sha256"])
-        log(f"{change['token']}: {change['old']} -> {change['new']}")
+        try:
+            validate_change(change)
+            path = casks / f"{change['token']}.rb"
+            if not path.is_file():
+                raise BumpError(f"{change['token']}: cask no longer exists")
+            cask = read_cask(path)
+            if cask["url"] != change["url_template"]:
+                raise BumpError(f"{change['token']}: URL template changed since verification")
+            if cask["url"].replace("#{version}", change["new"]) != change["url"]:
+                raise BumpError(f"{change['token']}: target URL changed since verification")
+            if cask["version"] == change["new"] and cask["sha256"] == change["sha256"]:
+                log(f"{change['token']}: already at the exact verified target")
+            elif cask["version"] == change["old"] and cask["sha256"] == change["old_sha256"]:
+                write_cask(path, cask["text"], change["new"], change["sha256"])
+                log(f"{change['token']}: {change['old']} -> {change['new']}")
+            else:
+                raise BumpError(f"{change['token']}: version or digest changed since verification")
+            approved.append(change)
+        except BumpError as error:
+            failures.append(str(error))
+    return approved, failures
 
 
-def github_output(changes: list[dict]) -> None:
+def github_output(changes: list[dict], *, applying: bool = False, rejected: int = 0) -> None:
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a") as handle:
@@ -219,9 +260,12 @@ def github_output(changes: list[dict]) -> None:
             if changes:
                 handle.write("| Cask | From | To | SHA-256 |\n|---|---|---|---|\n")
                 for c in changes:
-                    handle.write(f"| `{c['token']}` | {c['old']} | [{c['new']}]({c['release']}) | `{c['sha256']}` |\n")
+                    handle.write(f"| `{c['token']}` | {c['old']} | [{c['new']}]({c.get('release', '')}) | `{c['sha256']}` |\n")
             else:
-                handle.write("All casks are up to date.\n")
+                handle.write("No verified replay changes were accepted.\n" if applying
+                             else "All casks are up to date.\n")
+            if applying and rejected:
+                handle.write(f"{rejected} replay changes were held for a new check and verification.\n")
 
 
 def main() -> int:
@@ -230,37 +274,39 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="report only, do not edit casks")
     parser.add_argument("--output", type=Path, help="write the planned changes to this JSON file")
     parser.add_argument("--apply", type=Path, help="apply the changes from this JSON file and exit")
+    parser.add_argument("--casks-dir", type=Path, help="cask directory when replaying a plan")
     args = parser.parse_args()
+    if args.casks_dir and not args.apply:
+        parser.error("--casks-dir requires --apply")
 
     try:
         if args.apply:
-            apply(json.loads(args.apply.read_text()))
-            return 0
-
-        tokens = args.casks or sorted(p.stem for p in CASKS.glob("*.rb"))
-        changes, failures = [], []
-        for token in tokens:
-            path = CASKS / f"{token}.rb"
-            if not re.fullmatch(r"[a-z0-9][a-z0-9@.-]*", token) or not path.is_file():
-                failures.append(f"{token}: no such cask")
-                continue
-            try:
-                change = check(token, path)
-            except BumpError as error:
-                failures.append(str(error))
-                continue
-            if change:
-                changes.append(change)
-                if not args.dry_run:
-                    cask = read_cask(path)
-                    write_cask(path, cask["text"], change["new"], change["sha256"])
+            changes, failures = apply(json.loads(args.apply.read_text()), args.casks_dir)
+        else:
+            tokens = args.casks or sorted(p.stem for p in CASKS.glob("*.rb"))
+            changes, failures = [], []
+            for token in tokens:
+                path = CASKS / f"{token}.rb"
+                if not re.fullmatch(r"[a-z0-9][a-z0-9@.-]*", token) or not path.is_file():
+                    failures.append(f"{token}: no such cask")
+                    continue
+                try:
+                    change = check(token, path)
+                except BumpError as error:
+                    failures.append(str(error))
+                    continue
+                if change:
+                    changes.append(change)
+                    if not args.dry_run:
+                        cask = read_cask(path)
+                        write_cask(path, cask["text"], change["new"], change["sha256"])
     except BumpError as error:
         log(f"error: {error}")
         return 1
 
     if args.output:
         args.output.write_text(json.dumps(changes, indent=2) + "\n")
-    github_output(changes)
+    github_output(changes, applying=bool(args.apply), rejected=len(failures))
     for failure in failures:
         log(f"error: {failure}")
         if os.environ.get("GITHUB_ACTIONS"):

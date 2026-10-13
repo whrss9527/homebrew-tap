@@ -12,7 +12,10 @@ class VerifiedPlanTests(unittest.TestCase):
     runners = ["macos-latest", "macos-15-intel"]
 
     def change(self, token="pop"):
-        return {"token": token, "old": "1.0", "new": "1.1", "sha256": "a" * 64}
+        template = f"https://github.com/whrss9527/{token}/releases/download/v#{{version}}/{token.title()}-#{{version}}.zip"
+        return {"schema": 2, "token": token, "old": "1.0", "old_sha256": "b" * 64,
+                "url_template": template, "new": "1.1", "sha256": "a" * 64,
+                "url": template.replace("#{version}", "1.1")}
 
     def receipts(self, change):
         return [dict(change, runner=runner) for runner in self.runners]
@@ -32,6 +35,24 @@ class VerifiedPlanTests(unittest.TestCase):
                 receipts = self.receipts(change)
                 receipts[1][field] = value
                 self.assertEqual(select_verified([change], receipts, self.runners), [])
+
+    def test_all_bound_inputs_must_match_both_receipts(self):
+        change = self.change()
+        for field, value in [("schema", 1), ("schema", 2.0), ("old", "0.9"), ("old_sha256", "c" * 64),
+                             ("url_template", change["url_template"] + "other"),
+                             ("url", change["url"] + "other")]:
+            with self.subTest(field=field):
+                receipts = self.receipts(change)
+                receipts[1][field] = value
+                self.assertEqual(select_verified([change], receipts, self.runners), [])
+
+    def test_legacy_plan_and_receipts_do_not_approve_but_other_casks_can(self):
+        pop, stox = self.change(), self.change("stox")
+        legacy = {key: value for key, value in pop.items() if key in ["token", "old", "new", "sha256", "url"]}
+        self.assertEqual(select_verified([legacy, stox], self.receipts(pop) + self.receipts(stox), self.runners), [stox])
+        receipts = [{"token": "pop", "new": "1.1", "sha256": "a" * 64, "runner": runner}
+                    for runner in self.runners] + self.receipts(stox)
+        self.assertEqual(select_verified([pop, stox], receipts, self.runners), [stox])
 
     def test_duplicate_or_unknown_runner_does_not_replace_missing_runner(self):
         change = self.change()

@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
-"""Select bumps verified for the exact version and digest on every runner."""
+"""Select plans whose complete replay inputs were verified on every runner."""
 
 import argparse
 import json
 from pathlib import Path
 
+from bump_casks import BumpError, PLAN_FIELDS, validate_change
+
 
 def select_verified(plan, receipts, runners):
     if not runners:
         raise ValueError("at least one verification runner is required")
+    matching_receipts = []
+    for receipt in receipts:
+        try:
+            validate_change(receipt)
+        except BumpError:
+            continue
+        if isinstance(receipt.get("runner"), str):
+            matching_receipts.append(receipt)
     approved = []
     for change in plan:
+        try:
+            validate_change(change)
+        except BumpError as error:
+            print(f"held: {error}")
+            continue
         passed = {
             receipt.get("runner")
-            for receipt in receipts
-            if all(receipt.get(key) == change[key] for key in ("token", "new", "sha256"))
+            for receipt in matching_receipts
+            if all(receipt.get(key) == change[key] for key in PLAN_FIELDS)
         }
         if set(runners) <= passed:
             approved.append(change)
