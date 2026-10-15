@@ -22,9 +22,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
+import stat
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -91,10 +94,15 @@ def request(url: str, *, accept: str = "application/vnd.github+json", attempts: 
             if not retryable or attempt == attempts:
                 raise BumpError(f"GET {url} failed: HTTP {error.code}") from error
             wait = delay
-            if error.headers.get("Retry-After"):
-                wait = float(error.headers["Retry-After"])
-            elif error.headers.get("X-RateLimit-Remaining") == "0" and error.headers.get("X-RateLimit-Reset"):
-                wait = float(error.headers["X-RateLimit-Reset"]) - time.time() + 1
+            try:
+                if error.headers.get("Retry-After"):
+                    wait = float(error.headers["Retry-After"])
+                elif error.headers.get("X-RateLimit-Remaining") == "0" and error.headers.get("X-RateLimit-Reset"):
+                    wait = float(error.headers["X-RateLimit-Reset"]) - time.time() + 1
+            except ValueError as header_error:
+                raise BumpError(f"GET {url}: invalid retry/rate-limit header") from header_error
+            if not math.isfinite(wait):
+                raise BumpError(f"GET {url}: invalid retry/rate-limit header") from error
             if wait > 600:
                 raise BumpError(f"GET {url}: rate limited for {int(wait)}s, giving up") from error
             log(f"  HTTP {error.code} for {url}, retrying in {int(max(wait, 1))}s")
@@ -132,7 +140,10 @@ def version_key(version: str) -> tuple:
 
 
 def read_cask(path: Path) -> dict:
-    text = path.read_text()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise BumpError(f"{path.name}: could not read cask: {error}") from error
     version = VERSION_RE.findall(text)
     sha = SHA256_RE.findall(text)
     url = URL_RE.findall(text)
@@ -144,7 +155,77 @@ def read_cask(path: Path) -> dict:
 def write_cask(path: Path, text: str, version: str, sha256: str) -> None:
     text = VERSION_RE.sub(lambda m: f"{m[1]}{version}{m[3]}", text, count=1)
     text = SHA256_RE.sub(lambda m: f"{m[1]}{sha256}{m[3]}", text, count=1)
-    path.write_text(text)
+    temporary = None
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(text)
+        temporary.chmod(mode)
+        temporary.replace(path)
+    except OSError as error:
+        raise BumpError(f"{path.name}: could not write cask: {error}") from error
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as error:
+                log(f"  warning: could not remove temporary cask {temporary.name}: {error}")
+
+
+def release_data(payload: bytes, token: str) -> dict:
+    try:
+        release = json.loads(payload)
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
+        raise BumpError(f"{token}: latest release response is not valid JSON") from error
+    if not isinstance(release, dict):
+        raise BumpError(f"{token}: latest release response must be an object")
+    if not isinstance(release.get("tag_name"), str) or not release["tag_name"]:
+        raise BumpError(f"{token}: latest release has no valid tag_name")
+    if not all(type(release.get(field)) is bool for field in ("draft", "prerelease")):
+        raise BumpError(f"{token}: latest release has invalid draft/prerelease flags")
+    if "html_url" in release and not isinstance(release["html_url"], str):
+        raise BumpError(f"{token}: latest release has an invalid html_url")
+    for field in ("tag_name", "html_url"):
+        if field in release:
+            try:
+                release[field].encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise BumpError(f"{token}: latest release has invalid Unicode in {field}") from error
+    if not isinstance(release.get("assets"), list):
+        raise BumpError(f"{token}: latest release assets must be an array")
+    names = set()
+    for asset in release["assets"]:
+        if not isinstance(asset, dict) or not all(
+            isinstance(asset.get(field), str) and asset[field]
+            for field in ("name", "browser_download_url")
+        ):
+            raise BumpError(f"{token}: latest release has an invalid asset name or download URL")
+        if asset["name"] in names:
+            raise BumpError(f"{token}: latest release has duplicate asset names")
+        names.add(asset["name"])
+        asset_url = asset["browser_download_url"]
+        try:
+            target = urllib.parse.urlsplit(asset_url)
+            _ = target.port
+        except ValueError as error:
+            raise BumpError(f"{token}: latest release has a malformed asset download URL") from error
+        if (target.scheme != "https" or not target.hostname or not asset_url.isascii()
+                or any(ord(character) <= 32 or ord(character) == 127 for character in asset_url)):
+            raise BumpError(f"{token}: latest release has a malformed asset download URL")
+        digest = asset.get("digest")
+        if digest is not None and not isinstance(digest, str):
+            raise BumpError(f"{token}: latest release has an invalid asset digest")
+        try:
+            asset["name"].encode("utf-8")
+            if isinstance(digest, str):
+                digest.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise BumpError(f"{token}: latest release has invalid Unicode in an asset") from error
+        if isinstance(digest, str) and digest.startswith("sha256:") and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise BumpError(f"{token}: latest release has a malformed SHA-256 digest")
+    return release
 
 
 def check(token: str, path: Path) -> dict | None:
@@ -155,7 +236,7 @@ def check(token: str, path: Path) -> dict | None:
     owner, repo = match["owner"], match["repo"]
     tag_prefix, _, tag_suffix = match["tag"].partition("#{version}")
 
-    release = json.loads(request(f"{API}/repos/{owner}/{repo}/releases/latest"))
+    release = release_data(request(f"{API}/repos/{owner}/{repo}/releases/latest"), token)
     if release.get("draft") or release.get("prerelease"):
         log(f"{token}: latest release {release.get('tag_name')} is a draft or prerelease, skipping")
         return None
@@ -170,7 +251,11 @@ def check(token: str, path: Path) -> dict | None:
     if latest == current:
         log(f"{token}: {current} is up to date")
         return None
-    if version_key(latest) < version_key(current):
+    try:
+        latest_is_older = version_key(latest) < version_key(current)
+    except ValueError as error:
+        raise BumpError(f"{token}: version has a numeric component that cannot be parsed") from error
+    if latest_is_older:
         log(f"{token}: cask has {current}, newer than the latest release {latest}; leaving it alone")
         return None
 
@@ -195,7 +280,11 @@ def check(token: str, path: Path) -> dict | None:
     sums = assets.get("SHA256SUMS.txt")
     if sums is not None:
         listed = {}
-        for line in request(sums["browser_download_url"], accept="application/octet-stream").decode().splitlines():
+        try:
+            checksum_text = request(sums["browser_download_url"], accept="application/octet-stream").decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise BumpError(f"{token}: SHA256SUMS.txt is not valid UTF-8") from error
+        for line in checksum_text.splitlines():
             parts = line.split()
             if len(parts) == 2:
                 listed[parts[1].lstrip("*")] = parts[0].lower()
@@ -245,6 +334,8 @@ def apply(changes: list[dict], casks: Path | None = None) -> tuple[list[dict], l
             approved.append(change)
         except BumpError as error:
             failures.append(str(error))
+        except OSError as error:
+            failures.append(f"{change['token']}: could not access cask: {error}")
     return approved, failures
 
 
@@ -262,10 +353,15 @@ def github_output(changes: list[dict], *, applying: bool = False, rejected: int 
                 for c in changes:
                     handle.write(f"| `{c['token']}` | {c['old']} | [{c['new']}]({c.get('release', '')}) | `{c['sha256']}` |\n")
             else:
-                handle.write("No verified replay changes were accepted.\n" if applying
-                             else "All casks are up to date.\n")
-            if applying and rejected:
-                handle.write(f"{rejected} replay changes were held for a new check and verification.\n")
+                if applying:
+                    handle.write("No verified replay changes were accepted.\n")
+                elif rejected:
+                    handle.write("No candidate updates were accepted.\n")
+                else:
+                    handle.write("All casks are up to date.\n")
+            if rejected:
+                handle.write(f"{rejected} replay changes were held for a new check and verification.\n" if applying
+                             else f"{rejected} casks could not be checked or updated.\n")
 
 
 def main() -> int:
@@ -287,19 +383,22 @@ def main() -> int:
             changes, failures = [], []
             for token in tokens:
                 path = CASKS / f"{token}.rb"
-                if not re.fullmatch(r"[a-z0-9][a-z0-9@.-]*", token) or not path.is_file():
+                if not re.fullmatch(r"[a-z0-9][a-z0-9@.-]*", token):
                     failures.append(f"{token}: no such cask")
                     continue
                 try:
+                    if not path.is_file():
+                        raise BumpError(f"{token}: no such cask")
                     change = check(token, path)
+                    if change:
+                        if not args.dry_run:
+                            cask = read_cask(path)
+                            write_cask(path, cask["text"], change["new"], change["sha256"])
+                        changes.append(change)
                 except BumpError as error:
                     failures.append(str(error))
-                    continue
-                if change:
-                    changes.append(change)
-                    if not args.dry_run:
-                        cask = read_cask(path)
-                        write_cask(path, cask["text"], change["new"], change["sha256"])
+                except OSError as error:
+                    failures.append(f"{token}: could not check or update cask: {error}")
     except BumpError as error:
         log(f"error: {error}")
         return 1
