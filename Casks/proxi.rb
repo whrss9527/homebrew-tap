@@ -1,6 +1,6 @@
 cask "proxi" do
-  version "0.16.3"
-  sha256 "bb0f22e42975f9efef87283c8a1d9f360643e21831d29dc81455b29fb23b9864"
+  version "0.17.2"
+  sha256 "e0a06bb0e8b15f9ec122eb25deee8b10278270a7bde060ff4b092976f2c1b82a"
 
   url "https://github.com/whrss9527/proxi/releases/download/v#{version}/Proxi-macos.zip"
   name "Proxi"
